@@ -31,7 +31,11 @@ install_watch() {
     -framework CoreFoundation
 
   sudo mkdir -p /usr/local/bin
-  sudo install -o root -g wheel -m 0755 "$TMP_BINARY" "$BIN"
+
+  # The watcher must be able to seize the physical keyboard briefly before
+  # Karabiner does.  Install it root-owned with setuid so the user LaunchAgent
+  # retains its GUI/TCC identity while HID open/write runs with EUID 0.
+  sudo install -o root -g wheel -m 4755 "$TMP_BINARY" "$BIN"
 
   # Remove the earlier system LaunchDaemon, if present.
   sudo launchctl bootout system "$OLD_SYSTEM_PLIST" 2>/dev/null || true
@@ -44,15 +48,12 @@ install_watch() {
   launchctl bootstrap "gui/$USER_UID" "$PLIST_DST"
   launchctl enable "gui/$USER_UID/$LABEL"
 
-  echo "Installed $LABEL as a user LaunchAgent."
+  echo "Installed $LABEL as a user LaunchAgent (setuid-root helper)."
   echo
-  echo "IMPORTANT: grant Input Monitoring permission to:"
+  echo "Input Monitoring must be enabled for:"
   echo "  $BIN"
   echo
-  echo "System Settings -> Privacy & Security -> Input Monitoring"
-  echo "Use + and press Cmd-Shift-G if needed to enter /usr/local/bin."
-  echo
-  echo "After granting permission, run:"
+  echo "After changing that permission, restart the agent with:"
   echo "  launchctl kickstart -k gui/$USER_UID/$LABEL"
   echo
   echo "Then power-cycle the K811 while Karabiner's open delay is enabled."
