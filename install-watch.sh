@@ -34,19 +34,17 @@ clean_old_install() {
 }
 
 install_watch() {
-  # Start from a known-clean installation state.
-  clean_old_install
-
+  # Build first so a compiler failure does not destroy a working install.
   TMP_BINARY="$(mktemp -t k811-fkeys-watch)"
 
   cc "$SRC" -o "$TMP_BINARY" \
     -framework IOKit \
     -framework CoreFoundation
 
-  sudo mkdir -p /usr/local/bin
+  # Only replace the current installation after a successful build.
+  clean_old_install
 
-  # Important: this is a normal root-owned executable, not setuid.
-  # The LaunchDaemon itself runs it as root.
+  sudo mkdir -p /usr/local/bin
   sudo install -o root -g wheel -m 0755 "$TMP_BINARY" "$BIN"
   sudo install -o root -g wheel -m 0644 "$PLIST_SRC" "$SYSTEM_PLIST"
 
@@ -55,26 +53,26 @@ install_watch() {
 
   echo "Installed $LABEL as a root LaunchDaemon."
   echo
-  echo "Do NOT rebuild or reinstall the binary before testing."
-  echo
-  echo "Now remove any stale k811-fkeys-watch entry from Input Monitoring,"
-  echo "then add this exact installed binary and enable it:"
+  echo "Grant Input Monitoring to this exact installed binary:"
   echo "  $BIN"
   echo
   echo "System Settings -> Privacy & Security -> Input Monitoring"
+  echo "Remove any stale k811-fkeys-watch entry first."
   echo "Use +, then Cmd-Shift-G and enter /usr/local/bin if needed."
   echo
-  echo "After granting Input Monitoring, restart the daemon:"
+  echo "After granting permission, restart the daemon:"
   echo "  sudo launchctl kickstart -k system/$LABEL"
   echo
-  echo "Then power-cycle the K811 while Karabiner's open delay is 5000 ms."
+  echo "If Karabiner-Elements is enabled, configure its Expert setting"
+  echo '"Delay before opening a device (ms)" before power-cycling the K811.'
+  echo "5000 ms is a known-working starting value."
 }
 
 uninstall_watch() {
   clean_old_install
-  echo "Removed $LABEL user agent, system daemon, binary, and logs."
-  echo "TCC entries are not modified; remove k811-fkeys-watch manually from"
-  echo "Input Monitoring/Accessibility if you want a completely clean UI state."
+  echo "Removed $LABEL, its binary, older user-agent installs, and logs."
+  echo "Privacy-list entries are not modified; remove k811-fkeys-watch"
+  echo "from Input Monitoring manually if desired."
 }
 
 case "${1:-install}" in
