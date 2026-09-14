@@ -7,22 +7,28 @@ PLIST_SRC="$ROOT_DIR/com.local.k811-fkeys-watch.plist"
 BIN="/usr/local/bin/k811-fkeys-watch"
 PLIST_DST="/Library/LaunchDaemons/com.local.k811-fkeys-watch.plist"
 LABEL="com.local.k811-fkeys-watch"
+TMP_BINARY=""
+
+cleanup() {
+  if [[ -n "${TMP_BINARY:-}" ]]; then
+    rm -f "$TMP_BINARY"
+  fi
+}
+trap cleanup EXIT
 
 usage() {
   echo "Usage: $0 [install|uninstall]"
 }
 
 install_watch() {
-  local tmp
-  tmp="$(mktemp -t k811-fkeys-watch)"
-  trap 'rm -f "$tmp"' EXIT
+  TMP_BINARY="$(mktemp -t k811-fkeys-watch)"
 
-  cc "$SRC" -o "$tmp" \
+  cc "$SRC" -o "$TMP_BINARY" \
     -framework IOKit \
     -framework CoreFoundation
 
   sudo mkdir -p /usr/local/bin
-  sudo install -o root -g wheel -m 0755 "$tmp" "$BIN"
+  sudo install -o root -g wheel -m 0755 "$TMP_BINARY" "$BIN"
   sudo install -o root -g wheel -m 0644 "$PLIST_SRC" "$PLIST_DST"
 
   sudo launchctl bootout system "$PLIST_DST" 2>/dev/null || true
