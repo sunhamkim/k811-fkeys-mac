@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define LOGITECH_VID 0x046D
@@ -66,12 +67,10 @@ static bool is_expected_reply(const uint8_t *report, CFIndex len)
     if (len < 5 || (report[0] != 0x10 && report[0] != 0x11))
         return false;
 
-    /* Normal HID++ 2.0 reply. */
     if (report[2] == BACKLIGHT_FEATURE_INDEX &&
         report[3] == expected_function_swid)
         return true;
 
-    /* HID++ 2.0 error reply: FF, feature index, function+software ID, error. */
     if (len >= 6 && report[2] == 0xFF &&
         report[3] == BACKLIGHT_FEATURE_INDEX &&
         report[4] == expected_function_swid)
@@ -213,7 +212,6 @@ static IOHIDDeviceRef copy_k811(void)
                     CFNumberGetValue((CFNumberRef)usage_ref,
                                      kCFNumberIntType, &usage);
 
-                /* Tahoe exposes the K811 as the keyboard collection (1/6). */
                 if (usage_page == 0x0001 && usage == 0x0006) {
                     result = device;
                     CFRetain(result);
@@ -259,12 +257,10 @@ int main(void)
                                    CFRunLoopGetCurrent(),
                                    kCFRunLoopDefaultMode);
 
-    /* software ID D, function 0: get current BACKLIGHT value */
     const uint8_t get_backlight[7] = {
         0x10, 0xFF, BACKLIGHT_FEATURE_INDEX, 0x0D, 0x00, 0x00, 0x00
     };
 
-    /* software ID E, function 1: request BACKLIGHT value 0 (Off) */
     const uint8_t set_backlight_off[7] = {
         0x10, 0xFF, BACKLIGHT_FEATURE_INDEX, 0x1E, 0x00, 0x00, 0x00
     };
