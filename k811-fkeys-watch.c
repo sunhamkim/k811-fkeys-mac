@@ -1,13 +1,17 @@
 /*
  * k811-fkeys-watch.c
  *
- * Event-driven Logitech K811 Fn-key configurator for macOS.
+ * Event-driven Logitech K811 configurator for macOS.
  *
  * Karabiner-Elements seizes keyboards exclusively. To coexist with it, set
- * Karabiner's "Delay before opening a device" to a few seconds. This watcher
+ * Karabiner's "Delay before opening a device" to a short delay. This watcher
  * observes K811 arrival through the IOKit registry (without opening an
- * IOHIDManager), briefly seizes the device first, sends the HID++ Fn-mode
- * report, closes it immediately, and then leaves the device to Karabiner.
+ * IOHIDManager), briefly seizes the device first, applies the desired HID++
+ * settings, closes it immediately, and then leaves the device to Karabiner.
+ *
+ * Current reconnect policy:
+ *   - Standard F1-F12 mode (0x40A2 current state = 0)
+ *   - Keyboard backlight off (0x1981 = 0)
  *
  * Build:
  *   cc k811-fkeys-watch.c -o k811-fkeys-watch \
@@ -33,21 +37,34 @@
 
 /*
  * HID++ 2.0, K811:
+ *
+ * Fn inversion:
+ *   feature 0x40A2 is index 0x06
+ *   function 1, state 0 = standard F1-F12
+ *
+ * Backlight:
+ *   feature 0x1981 is index 0x08
+ *   function 1, value 0 = Off
+ *
+ * Report layout:
  *   report ID       0x10
  *   device index    0xFF (direct-connected Bluetooth device)
- *   feature index   0x06 (0x40A2 Fn Inversion with Default State)
  *   function        0x1
  *   software ID     0x4
- *   state           0x00 (standard F1-F12)
  */
 static const uint8_t standard_fkeys_report[7] = {
     0x10, 0xFF, 0x06, 0x14, 0x00, 0x00, 0x00
 };
 
-static bool set_standard_fkeys(IOHIDDeviceRef device)
+static const uint8_t backlight_off_report[7] = {
+    0x10, 0xFF, 0x08, 0x14, 0x00, 0x00, 0x00
+};
+
+static bool apply_k811_settings(IOHIDDeviceRef device)
 {
     IOReturn last_open = kIOReturnError;
-    IOReturn last_write = kIOReturnError;
+    IOReturn last_fn_write = kIOReturnError;
+    IOReturn last_backlight_write = kIOReturnError;
 
     for (int attempt = 0; attempt < RETRY_COUNT; ++attempt) {
         /*
@@ -58,16 +75,24 @@ static bool set_standard_fkeys(IOHIDDeviceRef device)
         last_open = IOHIDDeviceOpen(device, kIOHIDOptionsTypeSeizeDevice);
 
         if (last_open == kIOReturnSuccess) {
-            last_write = IOHIDDeviceSetReport(
+            last_fn_write = IOHIDDeviceSetReport(
                 device,
                 kIOHIDReportTypeOutput,
                 standard_fkeys_report[0],
                 standard_fkeys_report,
                 sizeof(standard_fkeys_report));
 
+            last_backlight_write = IOHIDDeviceSetReport(
+                device,
+                kIOHIDReportTypeOutput,
+                backlight_off_report[0],
+                backlight_off_report,
+                sizeof(backlight_off_report));
+
             IOHIDDeviceClose(device, kIOHIDOptionsTypeSeizeDevice);
 
-            if (last_write == kIOReturnSuccess)
+            if (last_fn_write == kIOReturnSuccess &&
+                last_backlight_write == kIOReturnSuccess)
                 return true;
         }
 
@@ -75,9 +100,11 @@ static bool set_standard_fkeys(IOHIDDeviceRef device)
     }
 
     fprintf(stderr,
-            "K811: failed to set F-key mode (open=0x%08x, write=0x%08x)\n",
+            "K811: failed to apply settings "
+            "(open=0x%08x, fn=0x%08x, backlight=0x%08x)\n",
             last_open,
-            last_write);
+            last_fn_write,
+            last_backlight_write);
     return false;
 }
 
@@ -96,7 +123,7 @@ static void device_matched(void *context, io_iterator_t iterator)
         IOHIDDeviceRef device = IOHIDDeviceCreate(kCFAllocatorDefault, service);
 
         if (device) {
-            (void)set_standard_fkeys(device);
+            (void)apply_k811_settings(device);
             CFRelease(device);
         } else {
             fprintf(stderr, "K811: IOHIDDeviceCreate failed.\n");
