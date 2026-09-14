@@ -1,18 +1,22 @@
 # k811-fkeys-mac
 
-Make F1–F12 behave as standard function keys by default on the Logitech K811, including after the keyboard is powered off and reconnected.
+Configure the Logitech K811 automatically whenever it reconnects:
+
+- standard F1–F12 mode by default; and
+- keyboard backlight off on reconnect.
 
 ## Why this is needed
 
-The K811 exposes Logitech HID++ 2.0 feature `0x40A2` (Fn Inversion with Default State). Setting its current state to `0` makes the top row behave as standard F1–F12. The setting is volatile: after a power cycle the keyboard restores its hardware default (`1`, media/special keys).
+The K811 exposes Logitech HID++ 2.0 features for Fn inversion and backlight control, but the relevant settings are volatile across a power cycle.
 
-The verified K811 command is:
+Verified reconnect commands used by this project are:
 
 ```text
-10 FF 06 14 00 00 00
+10 FF 06 14 00 00 00   # 0x40A2 Fn inversion: standard F1-F12
+10 FF 08 14 00 00 00   # 0x1981 Backlight: Off
 ```
 
-Modern Logitech software no longer supports the K811, so this project reapplies the setting automatically whenever the keyboard reconnects.
+The backlight setting only establishes the reconnect state. The keyboard's normal Fn/backlight keys can still be used afterward to turn the backlight on and adjust it manually.
 
 ## Automatic watcher
 
@@ -20,7 +24,7 @@ Modern Logitech software no longer supports the K811, so this project reapplies 
 
 1. watches the IOKit registry for Logitech K811 (`046d:b317`) arrival;
 2. briefly opens the keyboard with exclusive access;
-3. sends the HID++ Fn-mode report;
+3. applies standard F-key mode and backlight-off;
 4. immediately closes the device; and
 5. waits for the next reconnect.
 
@@ -35,15 +39,10 @@ chmod +x install-watch.sh
 ./install-watch.sh install
 ```
 
-The installer removes older user-LaunchAgent/system-LaunchDaemon variants, builds the watcher, installs it at:
+The installer builds the watcher and installs:
 
 ```text
 /usr/local/bin/k811-fkeys-watch
-```
-
-and installs the LaunchDaemon at:
-
-```text
 /Library/LaunchDaemons/com.local.k811-fkeys-watch.plist
 ```
 
@@ -52,14 +51,14 @@ and installs the LaunchDaemon at:
 After installation:
 
 1. Open **System Settings → Privacy & Security → Input Monitoring**.
-2. Remove any stale `k811-fkeys-watch` entry left by an earlier build.
-3. Press `+` and add the exact installed binary:
+2. Remove any stale `k811-fkeys-watch` entry from an earlier build.
+3. Press `+` and add:
 
    ```text
    /usr/local/bin/k811-fkeys-watch
    ```
 
-   In the file picker, press `Cmd-Shift-G` to enter `/usr/local/bin` if necessary.
+   Use `Cmd-Shift-G` in the file picker to enter `/usr/local/bin` if necessary.
 4. Enable the entry.
 5. Restart the daemon:
 
@@ -79,9 +78,9 @@ In **Karabiner-Elements Settings → Expert**, set **Delay before opening a devi
 1000
 ```
 
-`1000 ms` has been verified to work reliably on the tested setup and is also Karabiner's default value. If a particular machine shows occasional races, use a larger value such as `2000–5000 ms` for more margin.
+`1000 ms` has been verified to work reliably on the tested setup and is also Karabiner's default value. If a machine shows occasional races, increase it to `2000–5000 ms`.
 
-The corresponding Karabiner profile setting is:
+Equivalent profile setting:
 
 ```json
 "parameters": {
@@ -96,14 +95,16 @@ The resulting sequence is:
 ```text
 K811 connects
   → watcher detects the new IOHIDDevice
-  → watcher seizes it briefly and sends 0x40A2 state=0
+  → watcher briefly seizes it
+  → Fn mode = standard F1-F12
+  → backlight = off
   → watcher closes it
-  → Karabiner opens/seizes the K811 after its configured delay
+  → Karabiner opens/seizes the K811
 ```
 
 ## Test and diagnostics
 
-Power the K811 off and back on. No manual command should be required; F1–F12 should come up in standard function-key mode.
+Power the K811 off and back on. No manual command should be required.
 
 Check daemon status:
 
@@ -117,7 +118,7 @@ Check errors:
 cat /tmp/k811-fkeys-watch.err.log
 ```
 
-Successful operation is intentionally quiet. Errors such as `kIOReturnNotPermitted` or an exclusive-access conflict are written to stderr.
+Successful operation is intentionally quiet.
 
 ## Uninstall
 
@@ -125,11 +126,11 @@ Successful operation is intentionally quiet. Errors such as `kIOReturnNotPermitt
 ./install-watch.sh uninstall
 ```
 
-This removes the watcher binary, the root LaunchDaemon, any older user LaunchAgent left by development versions, and watcher logs. macOS privacy-list entries must be removed manually if desired.
+This removes the watcher binary, root LaunchDaemon, older development LaunchAgent installs, and watcher logs. macOS privacy-list entries must be removed manually if desired.
 
 ## Manual tool
 
-`k811-fkeys.c` remains available for one-shot manual configuration:
+`k811-fkeys.c` remains available for one-shot Fn-mode configuration:
 
 ```bash
 cc k811-fkeys.c -o k811-fkeys \
