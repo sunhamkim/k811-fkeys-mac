@@ -22,5 +22,11 @@
 
   <key>ThrottleInterval</key>
   <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/k811-fkeys-watch.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/k811-fkeys-watch.err.log</string>
 </dict>
 </plist>
