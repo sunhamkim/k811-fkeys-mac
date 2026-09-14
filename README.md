@@ -73,19 +73,19 @@ If the binary is rebuilt or replaced later, macOS may require the Input Monitori
 
 Karabiner-Elements normally seizes physical keyboards exclusively. The watcher therefore needs a short window to configure the K811 before Karabiner opens it.
 
-In **Karabiner-Elements Settings → Expert**, set **Delay before opening a device (ms)**. A value of:
+In **Karabiner-Elements Settings → Expert**, set **Delay before opening a device (ms)** to:
 
 ```text
-5000
+1000
 ```
 
-is confirmed to work on the tested setup. It can be reduced experimentally.
+`1000 ms` has been verified to work reliably on the tested setup and is also Karabiner's default value. If a particular machine shows occasional races, use a larger value such as `2000–5000 ms` for more margin.
 
 The corresponding Karabiner profile setting is:
 
 ```json
 "parameters": {
-  "delay_milliseconds_before_open_device": 5000
+  "delay_milliseconds_before_open_device": 1000
 }
 ```
 
