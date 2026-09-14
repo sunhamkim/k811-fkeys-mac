@@ -63,9 +63,9 @@ install_watch() {
   echo "After granting permission, restart the daemon:"
   echo "  sudo launchctl kickstart -k system/$LABEL"
   echo
-  echo "If Karabiner-Elements is enabled, configure its Expert setting"
-  echo '"Delay before opening a device (ms)" before power-cycling the K811.'
-  echo "5000 ms is a known-working starting value."
+  echo "If Karabiner-Elements is enabled, set its Expert option"
+  echo '"Delay before opening a device (ms)" to 1000.'
+  echo "Use a larger delay only if a particular system shows races."
 }
 
 uninstall_watch() {
