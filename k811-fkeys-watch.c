@@ -88,8 +88,7 @@ static void device_matched(void *context,
     if (result != kIOReturnSuccess)
         return;
 
-    if (set_standard_fkeys(device))
-        fprintf(stderr, "K811: standard F-key mode applied.\n");
+    (void)set_standard_fkeys(device);
 }
 
 static CFMutableDictionaryRef make_matching_dictionary(void)
