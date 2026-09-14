@@ -3,13 +3,11 @@
  *
  * Event-driven Logitech K811 Fn-key configurator for macOS.
  *
- * The K811 forgets its Fn-inversion state when powered off. This daemon
- * watches for K811 HID arrival and, before Karabiner-Elements seizes the
- * device, sets HID++ 0x40A2 current state to 0 (standard F1-F12).
- *
- * Karabiner-Elements must have a sufficiently long
- * delay_milliseconds_before_open_device so this program can open the K811
- * first. Start with 5000 ms; once stable, reduce it experimentally.
+ * Karabiner-Elements seizes keyboards exclusively. To coexist with it, set
+ * Karabiner's "Delay before opening a device" to a few seconds. This watcher
+ * observes K811 arrival through the IOKit registry (without opening an
+ * IOHIDManager), briefly seizes the device first, sends the HID++ Fn-mode
+ * report, closes it immediately, and then leaves the device to Karabiner.
  *
  * Build:
  *   cc k811-fkeys-watch.c -o k811-fkeys-watch \
@@ -17,9 +15,9 @@
  */
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
 #include <IOKit/hid/IOHIDDevice.h>
 #include <IOKit/hid/IOHIDKeys.h>
-#include <IOKit/hid/IOHIDManager.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,8 +27,9 @@
 #define LOGITECH_VID 0x046D
 #define K811_PID     0xB317
 
-#define RETRY_COUNT     20
-#define RETRY_DELAY_US  100000  /* 100 ms; 2 s total retry window */
+/* Give the Bluetooth HID stack time to finish bringing the device up. */
+#define RETRY_COUNT     50
+#define RETRY_DELAY_US  50000   /* 50 ms; 2.5 s total */
 
 /*
  * HID++ 2.0, K811:
@@ -51,7 +50,12 @@ static bool set_standard_fkeys(IOHIDDeviceRef device)
     IOReturn last_write = kIOReturnError;
 
     for (int attempt = 0; attempt < RETRY_COUNT; ++attempt) {
-        last_open = IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
+        /*
+         * Seize is intentional. The diagnostic probe succeeds this way;
+         * shared-open can succeed while SetReport is still denied. Karabiner's
+         * open delay gives us a brief exclusive window here.
+         */
+        last_open = IOHIDDeviceOpen(device, kIOHIDOptionsTypeSeizeDevice);
 
         if (last_open == kIOReturnSuccess) {
             last_write = IOHIDDeviceSetReport(
@@ -61,7 +65,7 @@ static bool set_standard_fkeys(IOHIDDeviceRef device)
                 standard_fkeys_report,
                 sizeof(standard_fkeys_report));
 
-            IOHIDDeviceClose(device, kIOHIDOptionsTypeNone);
+            IOHIDDeviceClose(device, kIOHIDOptionsTypeSeizeDevice);
 
             if (last_write == kIOReturnSuccess)
                 return true;
@@ -77,28 +81,34 @@ static bool set_standard_fkeys(IOHIDDeviceRef device)
     return false;
 }
 
-static void device_matched(void *context,
-                           IOReturn result,
-                           void *sender,
-                           IOHIDDeviceRef device)
+/*
+ * IOService matching does not open the HID device, so this watcher can remain
+ * alive even while Karabiner currently owns the keyboard. When the K811 is
+ * power-cycled, a newly matched IOHIDDevice service arrives here.
+ */
+static void device_matched(void *context, io_iterator_t iterator)
 {
     (void)context;
-    (void)sender;
 
-    if (result != kIOReturnSuccess)
-        return;
+    io_service_t service;
 
-    (void)set_standard_fkeys(device);
+    while ((service = IOIteratorNext(iterator)) != IO_OBJECT_NULL) {
+        IOHIDDeviceRef device = IOHIDDeviceCreate(kCFAllocatorDefault, service);
+
+        if (device) {
+            (void)set_standard_fkeys(device);
+            CFRelease(device);
+        } else {
+            fprintf(stderr, "K811: IOHIDDeviceCreate failed.\n");
+        }
+
+        IOObjectRelease(service);
+    }
 }
 
 static CFMutableDictionaryRef make_matching_dictionary(void)
 {
-    CFMutableDictionaryRef dict = CFDictionaryCreateMutable(
-        kCFAllocatorDefault,
-        0,
-        &kCFTypeDictionaryKeyCallBacks,
-        &kCFTypeDictionaryValueCallBacks);
-
+    CFMutableDictionaryRef dict = IOServiceMatching("IOHIDDevice");
     if (!dict)
         return NULL;
 
@@ -135,49 +145,70 @@ static CFMutableDictionaryRef make_matching_dictionary(void)
 
 int main(void)
 {
-    IOHIDManagerRef manager = IOHIDManagerCreate(
-        kCFAllocatorDefault,
-        kIOHIDOptionsTypeNone);
+    IONotificationPortRef notify_port =
+        IONotificationPortCreate(kIOMasterPortDefault);
 
-    if (!manager) {
-        fprintf(stderr, "K811: failed to create IOHIDManager.\n");
+    if (!notify_port) {
+        fprintf(stderr, "K811: failed to create IOKit notification port.\n");
         return 1;
     }
+
+    CFRunLoopSourceRef source =
+        IONotificationPortGetRunLoopSource(notify_port);
+
+    if (!source) {
+        fprintf(stderr, "K811: failed to obtain IOKit run-loop source.\n");
+        IONotificationPortDestroy(notify_port);
+        return 1;
+    }
+
+    CFRunLoopAddSource(
+        CFRunLoopGetCurrent(),
+        source,
+        kCFRunLoopDefaultMode);
 
     CFMutableDictionaryRef match = make_matching_dictionary();
     if (!match) {
-        fprintf(stderr, "K811: failed to create HID matching dictionary.\n");
-        CFRelease(manager);
+        fprintf(stderr, "K811: failed to create IOKit matching dictionary.\n");
+        IONotificationPortDestroy(notify_port);
         return 1;
     }
 
-    IOHIDManagerSetDeviceMatching(manager, match);
-    IOHIDManagerRegisterDeviceMatchingCallback(manager, device_matched, NULL);
-    IOHIDManagerScheduleWithRunLoop(
-        manager,
-        CFRunLoopGetCurrent(),
-        kCFRunLoopDefaultMode);
+    io_iterator_t iterator = IO_OBJECT_NULL;
 
-    IOReturn ret = IOHIDManagerOpen(manager, kIOHIDOptionsTypeNone);
-    if (ret != kIOReturnSuccess) {
-        fprintf(stderr, "K811: IOHIDManagerOpen failed: 0x%08x\n", ret);
-        CFRelease(match);
-        CFRelease(manager);
+    /*
+     * IOServiceAddMatchingNotification consumes the matching dictionary.
+     * Draining the iterator once handles an already-present K811 and arms the
+     * notification for future arrivals.
+     */
+    kern_return_t kr = IOServiceAddMatchingNotification(
+        notify_port,
+        kIOFirstMatchNotification,
+        match,
+        device_matched,
+        NULL,
+        &iterator);
+
+    if (kr != KERN_SUCCESS) {
+        fprintf(stderr,
+                "K811: IOServiceAddMatchingNotification failed: 0x%08x\n",
+                kr);
+        IONotificationPortDestroy(notify_port);
         return 1;
     }
 
-    CFRelease(match);
+    device_matched(NULL, iterator);
 
-    /* Existing matching devices are delivered through the matching callback;
-       future reconnects are delivered the same way. */
     CFRunLoopRun();
 
-    IOHIDManagerUnscheduleFromRunLoop(
-        manager,
-        CFRunLoopGetCurrent(),
-        kCFRunLoopDefaultMode);
-    IOHIDManagerClose(manager, kIOHIDOptionsTypeNone);
-    CFRelease(manager);
+    if (iterator != IO_OBJECT_NULL)
+        IOObjectRelease(iterator);
 
+    CFRunLoopRemoveSource(
+        CFRunLoopGetCurrent(),
+        source,
+        kCFRunLoopDefaultMode);
+
+    IONotificationPortDestroy(notify_port);
     return 0;
 }
