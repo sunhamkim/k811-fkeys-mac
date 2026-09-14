@@ -146,7 +146,7 @@ static CFMutableDictionaryRef make_matching_dictionary(void)
 int main(void)
 {
     IONotificationPortRef notify_port =
-        IONotificationPortCreate(kIOMasterPortDefault);
+        IONotificationPortCreate(kIOMainPortDefault);
 
     if (!notify_port) {
         fprintf(stderr, "K811: failed to create IOKit notification port.\n");
